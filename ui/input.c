@@ -26,5 +26,18 @@ int create_input()
 
     /* fork 를 이용하세요 */
 
+    switch (systemPid = fork()) {
+    case -1:
+        printf("fork failed\n");
+        break;
+    case 0:
+        /* 프로세스 이름 변경 */
+        perror("prctl()"); //정상 예외처리
+        system_server(); // system_server 실행
+        break;
+    default:
+        break;
+    }
+    
     return 0;
 }
