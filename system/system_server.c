@@ -24,5 +24,7 @@ int create_system_server()
 
     printf("여기서 시스템 프로세스를 생성합니다.\n");
 
+    /* fork 를 이용하세요 */
+
     return 0;
 }
