@@ -33,7 +33,7 @@ int create_input()
     case 0:
         /* 프로세스 이름 변경 */
         perror("prctl()"); //정상 예외처리
-        system_server(); // system_server 실행
+        input(); // input 실행
         break;
     default:
         break;
