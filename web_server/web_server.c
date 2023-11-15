@@ -17,9 +17,10 @@ int create_web_server()
     switch (systemPid = fork()) {
     case -1:
         printf("fork failed\n");
-        break;
     case 0:
-        execl("/usr/local/bin/filebrowser", "filebrowser", "-p", "8282", (char *) NULL);
+        if (execl("/usr/local/bin/filebrowser", "filebrowser", "-p", "8282", (char *) NULL)) {
+            printf("execfailed\n");
+        }
         break;
     default:
         break;
@@ -27,3 +28,4 @@ int create_web_server()
 
     return 0;
 }
+
