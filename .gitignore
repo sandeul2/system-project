@@ -1,0 +1,6 @@
+# .o 확장자 파일 무시
+*.o
+# .db 확장자 파일 무시
+*.db
+# toy_system 파일 무시
+toy_system
