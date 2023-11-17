@@ -1,3 +1,5 @@
+#include <assert.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <sys/prctl.h>
 #include <signal.h>
@@ -13,7 +15,17 @@ static int five_timer = 0;
 
 static void five_timer_handler() {
     five_timer += 5;
-    printf("five_timer is : %d\n", five_timer);
+    /* printf("five_timer is : %d\n", five_timer); */
+}
+
+void set_periodic_timer(long sec_delay, long usec_delay)
+{
+   struct itimerval itimer_val = {
+       .it_interval = { .tv_sec = sec_delay, .tv_usec = usec_delay },
+       .it_value = { .tv_sec = sec_delay, .tv_usec = usec_delay }
+    };
+
+   setitimer(ITIMER_REAL, &itimer_val, (struct itimerval*)0);
 }
 
 int posix_sleep_ms(unsigned int timeout_ms) {
@@ -25,11 +37,65 @@ int posix_sleep_ms(unsigned int timeout_ms) {
     return nanosleep(&sleep_time, NULL);
 }
 
+void *watchdog_thread(void* arg)
+{
+    char *s = arg;
+
+    printf("%s", s);
+
+    while (1) {
+        posix_sleep_ms(5000);
+    }
+
+    return 0;
+}
+
+void *monitor_thread(void* arg)
+{
+    char *s = arg;
+
+    printf("%s", s);
+
+    while (1) {
+        posix_sleep_ms(5000);
+    }
+
+    return 0;
+}
+
+void *disk_service_thread(void* arg)
+{
+    char *s = arg;
+
+    printf("%s", s);
+
+    while (1) {
+        posix_sleep_ms(5000);
+    }
+
+    return 0;
+}
+
+void *camera_service_thread(void* arg)
+{
+    char *s = arg;
+
+    printf("%s", s);
+
+    while (1) {
+        posix_sleep_ms(5000);
+    }
+
+    return 0;
+}
+
 int system_server() {
     struct itimerspec ts;
     struct sigaction  sa;
     struct sigevent   sev;
     timer_t *tidlist;
+    int retcode;
+    pthread_t watchdog_thread_tid, monitor_thread_tid, disk_service_thread_tid, camera_service_thread_tid;
 
     printf("나 system_server 프로세스!\n");
 
@@ -43,12 +109,19 @@ int system_server() {
     }
 
     /* lab6 : 5초 타이머를 만들어 봅시다. */
-    struct itimerval itv;
-    itv.it_interval.tv_sec = 5; // 5초 간격으로 반복
-    itv.it_interval.tv_usec = 0; // 마이크로 단위 반복
-    itv.it_value.tv_sec = 5; // 5초 후 타이머 시작
-    itv.it_value.tv_usec = 0; // 마이크로 타이머 초기 설정
-    setitimer(ITIMER_REAL, &itv, NULL);
+    signal(SIGALRM, five_timer_handler);
+    /* 5초 타이머 등록 */
+    set_periodic_timer(5, 0);
+
+    /* lab7 : watchdog, monitor, disk_service, camera_service 스레드를 생성한다. */
+    retcode = pthread_create(&watchdog_thread_tid, NULL, watchdog_thread, "watchdog thread\n");
+    assert(retcode == 0);
+    retcode = pthread_create(&monitor_thread_tid, NULL, monitor_thread, "monitor thread\n");
+    assert(retcode == 0);
+    retcode = pthread_create(&disk_service_thread_tid, NULL, disk_service_thread, "disk service thread\n");
+    assert(retcode == 0);
+    retcode = pthread_create(&camera_service_thread_tid, NULL, camera_service_thread, "camera service thread\n");
+    assert(retcode == 0);
 
     while (1) {
         posix_sleep_ms(5000);
