@@ -4,7 +4,8 @@
         "system_server.h": "c",
         "input.h": "c",
         "stdio.h": "c",
-        "time.h": "c"
+        "iostream": "cpp",
+        "thread": "c"
     },
     "C_Cpp.errorSquiggles": "Disabled"
 }
