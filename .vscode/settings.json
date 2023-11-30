@@ -5,7 +5,8 @@
         "input.h": "c",
         "stdio.h": "c",
         "iostream": "cpp",
-        "thread": "c"
+        "thread": "c",
+        "ucontext.h": "c"
     },
     "C_Cpp.errorSquiggles": "Disabled"
 }
