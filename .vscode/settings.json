@@ -6,7 +6,8 @@
         "stdio.h": "c",
         "iostream": "cpp",
         "thread": "c",
-        "ucontext.h": "c"
+        "ucontext.h": "c",
+        "mqueue.h": "c"
     },
     "C_Cpp.errorSquiggles": "Disabled"
 }

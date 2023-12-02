@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <semaphore.h>
 #include <sys/prctl.h>
 #include <signal.h>
 #include <sys/time.h>
@@ -23,23 +24,57 @@ static mqd_t monitor_queue;
 static mqd_t disk_queue;
 static mqd_t camera_queue;
 
-static int five_timer = 0;
+static int toy_timer = 0;
+pthread_mutex_t toy_timer_mutex = PTHREAD_MUTEX_INITIALIZER;
+static sem_t global_timer_sem;
+static bool global_timer_stopped;
 
-void signal_exit(void);
+void set_periodic_timer(long sec_delay, long usec_delay);
 
-static void five_timer_handler() {
-    five_timer += 10;
-    signal_exit();
-    /* printf("five_timer is : %d\n", five_timer); */
+static void timer_expire_signal_handler() {
+    // lab12 : signal 문맥에서는 비동기 시그널 안전 함수(async-signal-safe function) 사용
+    // man signal 확인
+    // sem_post는 async-signal-safe function
+    // 여기서는 sem_post 사용
+    sem_post(&global_timer_sem);
 }
 
-void set_periodic_timer(long sec_delay, long usec_delay){
-   struct itimerval itimer_val = {
-       .it_interval = { .tv_sec = sec_delay, .tv_usec = usec_delay },
-       .it_value = { .tv_sec = sec_delay, .tv_usec = usec_delay }
+static void system_timeout_handler() {
+    // 여기는 signal hander가 아니기 때문에 안전하게 mutex lock 사용 가능
+    pthread_mutex_lock(&toy_timer_mutex);
+    toy_timer++;
+    printf("toy timer: %d\n", toy_timer);
+    pthread_mutex_unlock(&toy_timer_mutex);
+}
+
+static void *timer_thread(void *not_used) {
+    signal(SIGALRM, timer_expire_signal_handler);
+    set_periodic_timer(1, 1);
+
+	while (!global_timer_stopped) {
+		int rc = sem_wait(&global_timer_sem);
+		if (rc == -1 && errno == EINTR) {
+		    continue;
+		}
+
+		if (rc == -1) {
+		    perror("sem_wait");
+		    exit(-1);
+		}
+        // 아래 sleep을 sem_wait 함수를 사용하여 동기화 처리
+        // sleep(1);
+		system_timeout_handler();
+	}
+	return 0;
+}
+
+void set_periodic_timer(long sec_delay, long usec_delay) {
+	struct itimerval itimer_val = {
+		 .it_interval = { .tv_sec = sec_delay, .tv_usec = usec_delay },
+		 .it_value = { .tv_sec = sec_delay, .tv_usec = usec_delay }
     };
 
-   setitimer(ITIMER_REAL, &itimer_val, (struct itimerval*)0);
+	setitimer(ITIMER_REAL, &itimer_val, (struct itimerval*)0);
 }
 
 int posix_sleep_ms(unsigned int timeout_ms) {
@@ -71,6 +106,8 @@ void *watchdog_thread(void* arg) {
     return 0;
 }
 
+#define SENSOR_DATA 1
+
 void *monitor_thread(void* arg) {
     char *s = arg;
     int mqretcode;
@@ -91,8 +128,8 @@ void *monitor_thread(void* arg) {
     return 0;
 }
 
-void *disk_service_thread(void* arg) {
-   
+void *disk_service_thread(void* arg)
+{
     char *s = arg;
     FILE* apipe;
     char buf[1024];
@@ -110,6 +147,18 @@ void *disk_service_thread(void* arg) {
         printf("msg.type: %d\n", msg.msg_type);
         printf("msg.param1: %d\n", msg.param1);
         printf("msg.param2: %d\n", msg.param2);
+
+        /* popen 사용하여 10초마다 disk 잔여량 출력
+         * popen으로 shell을 실행하면 성능과 보안 문제가 있음
+         * 향후 파일 관련 시스템 콜 시간에 개선,
+         * 하지만 가끔 빠르게 테스트 프로그램 또는 프로토 타입 시스템 작성 시 유용
+         */
+        apipe = popen(cmd, "r");
+        while (fgets( buf, 1024, apipe) ) {
+            printf("%s", buf);
+        }
+        pclose(apipe);
+
     }
 
     return 0;
@@ -117,7 +166,8 @@ void *disk_service_thread(void* arg) {
 
 #define CAMERA_TAKE_PICTURE 1
 
-void *camera_service_thread(void* arg) {
+void *camera_service_thread(void* arg)
+{
     char *s = arg;
     int mqretcode;
     toy_msg_t msg;
@@ -143,38 +193,24 @@ void *camera_service_thread(void* arg) {
 }
 
 void signal_exit(void) {
-    /* lab9 : 여기에 구현하세요..  종료 메시지를 보내도록.. */
     pthread_mutex_lock(&system_loop_mutex);
     system_loop_exit = true;
-    // broadcast or 시그널 사용
     pthread_cond_broadcast(&system_loop_cond);
-    printf("Good bye\n");
     pthread_mutex_unlock(&system_loop_mutex);
 }
 
 int system_server() {
+    /* lab9 : 여기에 구현하세요..  종료 메시지를 보내도록.. */
     struct itimerspec ts;
     struct sigaction  sa;
     struct sigevent   sev;
     timer_t *tidlist;
     int retcode;
     pthread_t watchdog_thread_tid, monitor_thread_tid, disk_service_thread_tid, camera_service_thread_tid;
+    pthread_t timer_thread_tid;
 
     printf("나 system_server 프로세스!\n");
 
-    /* lab6 : 시그널 타이머 핸들러*/
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sa.sa_handler = five_timer_handler; // five_timer 핸들러
-    if (sigaction(SIGALRM, &sa, NULL) == -1) { // signal 함수로도 가능
-        printf("sigaction");
-        return 0;
-    }
-
-    /* lab6 : 5초 타이머를 만들어 봅시다. */
-    signal(SIGALRM, five_timer_handler);
-    /* lab9 : 10초 타이머로 변경 */
-    set_periodic_timer(10, 0);
 
     /* lab11 : 여기에 구현하세요. */
     /* 메시지 큐를 오픈한다. */
@@ -196,10 +232,17 @@ int system_server() {
     assert(retcode == 0);
     retcode = pthread_create(&camera_service_thread_tid, NULL, camera_service_thread, "camera service thread\n");
     assert(retcode == 0);
+    retcode = pthread_create(&timer_thread_tid, NULL, timer_thread, "timer thread\n");
+    assert(retcode == 0);
 
     printf("system init done.  waiting...");
+
     // lab9 : 여기에 구현하세요... 여기서 cond wait로 대기한다. 10초 후 알람이 울리면 <== system 출력
     //  1초 마다 wake-up 한다 
+    pthread_mutex_lock(&system_loop_mutex);
+    while (system_loop_exit == false) {
+        pthread_cond_wait(&system_loop_cond, &system_loop_mutex);
+    }
     pthread_mutex_lock(&system_loop_mutex); // pthread_cond_wait전 lock
     while (system_loop_exit == false) {
         pthread_cond_wait( &system_loop_exit, &system_loop_mutex); // lock 진행시 mutex 동일해야함
@@ -207,8 +250,10 @@ int system_server() {
     }
     pthread_mutex_unlock(&system_loop_mutex);
 
+    printf("<== system\n");
+
     while (1) {
-        posix_sleep_ms(5000);
+        sleep(1);
     }
 
     return 0;
