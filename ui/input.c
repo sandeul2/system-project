@@ -18,6 +18,7 @@
 #include <web_server.h>
 #include <execinfo.h>
 #include <toy_message.h>
+#include <shared_memory.h>
 
 #define TOY_TOK_BUFSIZE 64
 #define TOY_TOK_DELIM " \t\r\n\a"
@@ -40,6 +41,7 @@ static mqd_t watchdog_queue;
 static mqd_t monitor_queue;
 static mqd_t disk_queue;
 static mqd_t camera_queue;
+static shm_sensor_t *the_sensor_info = NULL;
 
 void segfault_handler(int sig_num, siginfo_t * info, void * ucontext) {
   void * array[50];
@@ -80,26 +82,30 @@ void segfault_handler(int sig_num, siginfo_t * info, void * ucontext) {
  *  lab7 : sensor thread
  */
 void *sensor_thread(void* arg) {
-    char saved_message[TOY_BUFFSIZE];
+    int mqretcode;
     char *s = arg;
-    int i = 0;
+    toy_msg_t msg;
+    // 여기 추가: 공유메모리 키
+    int shmid = toy_shm_get_keyid(SHM_KEY_SENSOR);
 
     printf("%s", s);
 
     while (1) {
-        i = 0;
-        // lab8 : 여기서 뮤텍스
-        // 과제를 억지로 만들기 위해 한 글자씩 출력 후 슬립
-        pthread_mutex_lock(&global_message_mutex);
-
-        while (global_message[i] != NULL) {
-            printf("%c", global_message[i]);
-            fflush(stdout);
-            posix_sleep_ms(500);
-            i++;
-        }
-        pthread_mutex_unlock(&global_message_mutex);
         posix_sleep_ms(5000);
+        // lab13 : 여기에 구현해 주세요.
+        // 현재 고도/온도/기압 정보를  SYS V shared memory에 저장 후
+        // monitor thread에 메시지 전송한다.
+        if (the_sensor_info != NULL) {
+            the_sensor_info->temp = 35;
+            the_sensor_info->press = 55;
+            the_sensor_info->humidity = 80;
+        }
+        
+        msg.msg_type = 1;
+        msg.param1 = shmid;
+        msg.param2 = 0;
+        mqretcode = mq_send(monitor_queue, (char *)&msg, sizeof(msg), 0);
+        assert(mqretcode == 0);
     }
 
     return 0;
@@ -358,7 +364,15 @@ int input(){
     sa.sa_sigaction = segfault_handler;
 
     // seg falut 핸들러
-    sigaction(SIGSEGV, &sa, NULL); /* ignore whether it works or not */
+     sigaction(SIGSEGV, &sa, NULL); /* ignore whether it works or not */
+
+    /* lab13 : 센서 정보를 공유하기 위한, 시스템 V 공유 메모리를 생성한다 */
+    // 여기에 구현해주세요....
+    the_sensor_info=(shm_sensor_t *) toy_shm_create(SHM_KEY_SENSOR,sizeof(shm_sensor_t));
+    if(the_sensor_info==(void*)-1) {
+        the_sensor_info=NULL;
+		printf("Error in shm_create SHmI%d SHM_KEY_SENSOR\n",SHM_KEY_SENSOR);
+    }	
 
     /* lab11 : 메시지 큐를 오픈 한다. */
     watchdog_queue = mq_open("/watchdog_queue", O_RDWR);

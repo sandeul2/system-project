@@ -7,6 +7,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <mqueue.h>
+#include <sys/shm.h>
 
 #include <system_server.h>
 #include <gui.h>
@@ -14,6 +15,7 @@
 #include <web_server.h>
 #include <camera_HAL.h>
 #include <toy_message.h>
+#include <shared_memory.h>
 
 pthread_mutex_t system_loop_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t  system_loop_cond  = PTHREAD_COND_INITIALIZER;
@@ -29,9 +31,11 @@ pthread_mutex_t toy_timer_mutex = PTHREAD_MUTEX_INITIALIZER;
 static sem_t global_timer_sem;
 static bool global_timer_stopped;
 
+static shm_sensor_t *the_sensor_info = NULL;
 void set_periodic_timer(long sec_delay, long usec_delay);
 
-static void timer_expire_signal_handler() {
+static void timer_expire_signal_handler()
+{
     // lab12 : signal 문맥에서는 비동기 시그널 안전 함수(async-signal-safe function) 사용
     // man signal 확인
     // sem_post는 async-signal-safe function
@@ -39,7 +43,8 @@ static void timer_expire_signal_handler() {
     sem_post(&global_timer_sem);
 }
 
-static void system_timeout_handler() {
+static void system_timeout_handler()
+{
     // 여기는 signal hander가 아니기 때문에 안전하게 mutex lock 사용 가능
     pthread_mutex_lock(&toy_timer_mutex);
     toy_timer++;
@@ -47,7 +52,8 @@ static void system_timeout_handler() {
     pthread_mutex_unlock(&toy_timer_mutex);
 }
 
-static void *timer_thread(void *not_used) {
+static void *timer_thread(void *not_used)
+{
     signal(SIGALRM, timer_expire_signal_handler);
     set_periodic_timer(1, 1);
 
@@ -68,7 +74,8 @@ static void *timer_thread(void *not_used) {
 	return 0;
 }
 
-void set_periodic_timer(long sec_delay, long usec_delay) {
+void set_periodic_timer(long sec_delay, long usec_delay)
+{
 	struct itimerval itimer_val = {
 		 .it_interval = { .tv_sec = sec_delay, .tv_usec = usec_delay },
 		 .it_value = { .tv_sec = sec_delay, .tv_usec = usec_delay }
@@ -77,7 +84,8 @@ void set_periodic_timer(long sec_delay, long usec_delay) {
 	setitimer(ITIMER_REAL, &itimer_val, (struct itimerval*)0);
 }
 
-int posix_sleep_ms(unsigned int timeout_ms) {
+int posix_sleep_ms(unsigned int timeout_ms)
+{
     struct timespec sleep_time;
 
     sleep_time.tv_sec = timeout_ms / MILLISEC_PER_SECOND;
@@ -86,7 +94,8 @@ int posix_sleep_ms(unsigned int timeout_ms) {
     return nanosleep(&sleep_time, NULL);
 }
 
-void *watchdog_thread(void* arg) {
+void *watchdog_thread(void* arg)
+{
     char *s = arg;
     int mqretcode;
     toy_msg_t msg;
@@ -108,21 +117,35 @@ void *watchdog_thread(void* arg) {
 
 #define SENSOR_DATA 1
 
-void *monitor_thread(void* arg) {
+void *monitor_thread(void* arg)
+{
     char *s = arg;
     int mqretcode;
     toy_msg_t msg;
+    int shmid;
 
     printf("%s", s);
 
     // lab11 : 여기에 구현하세요.
-    while (1) {
+   while (1) {
         mqretcode = (int)mq_receive(monitor_queue, (void *)&msg, sizeof(toy_msg_t), 0);
         assert(mqretcode >= 0);
-        printf("monitor_thread: 메시지가 도착했습니다.\n");
+        printf("monitor_thread: 메시지 도착완료.\n");
         printf("msg.type: %d\n", msg.msg_type);
         printf("msg.param1: %d\n", msg.param1);
         printf("msg.param2: %d\n", msg.param2);
+
+        if (msg.msg_type == SENSOR_DATA) {
+            shmid = msg.param1;
+            // lab13 : 이곳에 구현해 주세요.
+            // 시스템 V 공유 메모리 사용하여 공유 메모리 데이터를 출력
+            // 공유 메모리 키는 메시지 큐에서 받은 값을 사용.
+            the_sensor_info = toy_shm_attach(shmid);
+            printf("sensor temp: %d\n", the_sensor_info->temp);
+            printf("sensor press: %d\n", the_sensor_info->press);
+            printf("sensor humidity: %d\n", the_sensor_info->humidity);
+            toy_shm_detach(the_sensor_info);
+        }
     }
 
     return 0;
@@ -192,7 +215,8 @@ void *camera_service_thread(void* arg)
     return 0;
 }
 
-void signal_exit(void) {
+void signal_exit(void)
+{
     pthread_mutex_lock(&system_loop_mutex);
     system_loop_exit = true;
     pthread_cond_broadcast(&system_loop_cond);
